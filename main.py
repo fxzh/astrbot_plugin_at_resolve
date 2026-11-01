@@ -231,7 +231,7 @@ class AtMapStore:
     "97857",
     "QQ群at映射解析：自动学习 openid→昵称 映射，把 <@HEX> 改写为 @昵称，"
     "AI 从此认得谁 at 了谁；WebUI 页面与 /atmap 指令均可管理",
-    "1.0.1",
+    "1.0.3",
 )
 class AtResolvePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig = None):

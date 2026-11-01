@@ -1,6 +1,18 @@
 name: astrbot_plugin_at_resolve
+display_name: QQ群at映射解析
+short_desc: 把 qq_official 群聊 <@HEX> 提及改写为 @昵称，让 AI 认得谁 at 了谁
 desc: QQ群at映射解析：自动学习 member_openid→昵称 映射，把 <@HEX> 改写为 @昵称，让 AI 认得谁 at 了谁。WebUI 管理页面（QQ群at映射管理）或 /atmap 指令均可管理，按群持久化、可整群删除
 help: '在 WebUI → 插件管理 → 本插件 → 「QQ群at映射管理」页面维护映射（查看/增删改/删除整群）；或用指令（管理员） /atmap list|show|del|set|deluser|reload。数据在 data/plugin_data/astrbot_plugin_at_resolve/groups/ 按群一个 JSON。'
 version: v1.0.3
 author: "fengxue"
 repo: https://github.com/fxzh/astrbot_plugin_at_resolve
+social_link: https://github.com/fxzh
+astrbot_version: ">=4.29.0"
+category: 工具
+support_platforms:
+  - qq_official
+tags:
+  - QQ官方机器人
+  - 提及解析
+  - 消息预处理
+  - WebUI
