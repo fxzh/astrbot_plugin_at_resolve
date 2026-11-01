@@ -1,0 +1,63 @@
+{
+  "enabled": {
+    "description": "启用插件",
+    "type": "bool",
+    "default": true,
+    "hint": "总开关。关闭后既不学习也不改写，消息原样放行。"
+  },
+  "learn_enabled": {
+    "description": "启用自动学习",
+    "type": "bool",
+    "default": true,
+    "hint": "从每条群消息的发送者（member_openid + 昵称）自动维护映射；若 QQ 事件 mentions 数组携带其他被@用户的昵称也一并学习。"
+  },
+  "rewrite_enabled": {
+    "description": "启用提及改写",
+    "type": "bool",
+    "default": true,
+    "hint": "把消息文本中的 <@HEX> 替换为 @昵称。关闭后仅学习不改写。"
+  },
+  "apply_platforms": {
+    "description": "生效平台",
+    "type": "list",
+    "items": { "type": "string" },
+    "default": ["qq_official"],
+    "hint": "仅这些平台适配器的群消息会被学习/改写。<@HEX> 是 QQ 官方机器人的格式，一般保持默认即可。"
+  },
+  "mention_format": {
+    "description": "已解析提及的格式",
+    "type": "string",
+    "default": "@{name}",
+    "hint": "模板变量：{name}=昵称 {short}=openid前6位 {id}=完整openid。"
+  },
+  "unknown_format": {
+    "description": "未学到昵称时的格式",
+    "type": "string",
+    "default": "@群友{short}",
+    "hint": "被@者从未在本群发言（映射未学到）时的显示；昵称学到后仅对之后的新消息生效。"
+  },
+  "self_format": {
+    "description": "被@者是自己（机器人）时的格式",
+    "type": "string",
+    "default": "@机器人",
+    "hint": "消息里 @ 了机器人自己时的显示。"
+  },
+  "everyone_format": {
+    "description": "@全体成员的格式",
+    "type": "string",
+    "default": "@全体成员",
+    "hint": "<@everyone> 等全体提及的显示。"
+  },
+  "auto_clean_days": {
+    "description": "自动清理 N 天未活跃的群",
+    "type": "int",
+    "default": 0,
+    "hint": "超过 N 天没有任何消息的群，其映射数据在插件加载时自动删除；0=不自动清理（手动在 WebUI 或用 /atmap del 删）。"
+  },
+  "debug_log": {
+    "description": "调试日志",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后在日志中输出每条群消息的 mentions 原始字段与改写计数（用于观察 QQ 是否下发被@者昵称）。"
+  }
+}

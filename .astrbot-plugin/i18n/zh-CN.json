@@ -1,0 +1,15 @@
+{
+  "metadata": {
+    "display_name": "QQ群at映射解析"
+  },
+  "views": {
+    "atmap": {
+      "title": "QQ群at映射管理"
+    }
+  },
+  "pages": {
+    "atmap": {
+      "title": "QQ群at映射管理"
+    }
+  }
+}

@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QQ群at映射管理</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --border: #e3e6ea; --text: #1f2328;
+    --muted: #6b7280; --accent: #3b82f6; --accent-weak: #dbeafe;
+    --danger: #dc2626; --danger-weak: #fee2e2; --ok: #16a34a; --ok-weak: #dcfce7;
+    --input: #ffffff; --hover: #f0f3f6;
+  }
+  html[data-theme="dark"] {
+    --bg: #101418; --card: #171c22; --border: #2a313a; --text: #e6e9ee;
+    --muted: #9aa3af; --accent: #60a5fa; --accent-weak: #1e3a5f;
+    --danger: #f87171; --danger-weak: #4a1f1f; --ok: #4ade80; --ok-weak: #14361f;
+    --input: #10151b; --hover: #1d242c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    padding: 16px;
+  }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  header h1 { font-size: 18px; margin: 0; }
+  .sub { color: var(--muted); font-size: 12.5px; }
+  .spacer { flex: 1; }
+  button {
+    background: var(--card); color: var(--text); border: 1px solid var(--border);
+    border-radius: 7px; padding: 5px 12px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { background: var(--hover); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { background: transparent; border-color: var(--danger); color: var(--danger); }
+  button.danger.armed { background: var(--danger); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type="text"] {
+    background: var(--input); color: var(--text); border: 1px solid var(--border);
+    border-radius: 7px; padding: 5px 9px; font-size: 13px; min-width: 0;
+  }
+  input:focus { outline: 2px solid var(--accent-weak); border-color: var(--accent); }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; margin-bottom: 10px;
+  }
+  .growl {
+    position: fixed; top: 14px; right: 14px; z-index: 9; border-radius: 8px;
+    padding: 8px 14px; font-size: 13px; color: #fff; max-width: 70vw;
+    box-shadow: 0 4px 14px rgba(0,0,0,.25); opacity: 0; transition: opacity .2s;
+  }
+  .growr-show { opacity: 1; }
+  .growl.ok { background: var(--ok); } .growl.err { background: var(--danger); }
+  .g-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .g-name { font-weight: 600; font-size: 15px; }
+  .badge {
+    background: var(--accent-weak); color: var(--accent); border-radius: 20px;
+    font-size: 12px; padding: 1px 10px;
+  }
+  .gid { color: var(--muted); font-size: 12px; font-family: Consolas, monospace; cursor: pointer; }
+  .gid:hover { text-decoration: underline; }
+  .members { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 5px 8px; vertical-align: middle; }
+  th { color: var(--muted); font-weight: 500; font-size: 12.5px; border-bottom: 1px solid var(--border); }
+  td .oid { font-family: Consolas, monospace; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+  td .oid:hover { text-decoration: underline; }
+  td .time { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  td input { width: 100%; }
+  .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+  .toolbar { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; align-items: center; }
+  .toolbar input { flex: 1; min-width: 160px; }
+  .add-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .add-row input { flex: 1; min-width: 140px; }
+  .empty { color: var(--muted); text-align: center; padding: 26px 0; }
+  .banner-err {
+    background: var(--danger-weak); color: var(--danger); border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 12px; font-size: 13px;
+  }
+  .spin {
+    display: inline-block; width: 13px; height: 13px; border-radius: 50%;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    animation: r 0.8s linear infinite; vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes r { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>QQ群at映射管理</h1>
+  <span class="sub" id="stat">加载中…</span>
+  <span class="spacer"></span>
+  <button id="btn-reload" title="丢弃内存缓存，重新扫描数据目录">重扫目录</button>
+  <button id="btn-refresh" class="primary">刷新</button>
+</header>
+<div id="err-banner" class="banner-err" style="display:none"></div>
+<div id="list"></div>
+
+<script>
+"use strict";
+var state = {
+  groups: [], total: 0, expanded: {}, details: {}, filter: {},
+};
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function shortId(id) { return String(id || "").slice(0, 6).toUpperCase(); }
+
+var growlTimer = null;
+function growl(ok, msg) {
+  var el = document.createElement("div");
+  el.className = "growl " + (ok ? "ok" : "err");
+  el.textContent = msg;
+  document.body.appendChild(el);
+  requestAnimationFrame(function () { el.classList.add("growr-show"); });
+  setTimeout(function () {
+    el.classList.remove("growr-show");
+    setTimeout(function () { el.remove(); }, 250);
+  }, 2200);
+}
+
+/* 二次点击确认（iframe 沙箱没有 allow-modals，不能用 confirm()） */
+function armConfirm(btn, label, fn) {
+  if (btn.dataset.armed === "1") {
+    btn.dataset.armed = "";
+    fn();
+    return;
+  }
+  btn.dataset.armed = "1";
+  btn.dataset.oldText = btn.textContent;
+  btn.textContent = label;
+  btn.classList.add("armed");
+  setTimeout(function () {
+    if (btn.dataset.armed === "1") {
+      btn.dataset.armed = "";
+      btn.textContent = btn.dataset.oldText;
+      btn.classList.remove("armed");
+    }
+  }, 3000);
+}
+
+function api() {
+  if (window.AstrBotPluginView) return window.AstrBotPluginView;
+  return null;
+}
+
+function showError(msg) {
+  var b = document.getElementById("err-banner");
+  b.textContent = msg;
+  b.style.display = "";
+}
+
+function renderStat() {
+  document.getElementById("stat").textContent =
+    state.groups.length + " 个群 · " + state.total + " 条映射";
+}
+
+function render() {
+  renderStat();
+  var root = document.getElementById("list");
+  if (!state.groups.length) {
+    root.innerHTML = '<div class="card"><div class="empty">还没有学到任何映射。<br>群里的消息经过机器人后会自动学习发送者昵称；也可以等群出现后在这里手动添加。</div></div>';
+    return;
+  }
+  var html = "";
+  state.groups.forEach(function (g, i) {
+    var open = !!state.expanded[g.group_id];
+    html += '<div class="card" data-g="' + esc(g.group_id) + '">';
+    html += '<div class="g-head">';
+    html += '<span class="g-name">' + esc(g.group_name || "未知群") + "</span>";
+    html += '<span class="badge">' + g.members + " 人</span>";
+    html += '<span class="gid" data-full="' + esc(g.group_id) + '" title="点击展开/收起完整 ID">'
+      + shortId(g.group_id) + "…" + (g.last_active ? " · 活跃 " + esc(g.last_active) : "") + "</span>";
+    html += '<span class="spacer"></span>';
+    html += '<button data-act="toggle">' + (open ? "收起" : "展开") + "</button>";
+    html += '<button class="danger" data-act="del-group">删除群</button>';
+    html += "</div>";
+    if (open) html += renderDetail(g);
+    html += "</div>";
+  });
+  root.innerHTML = html;
+}
+
+function renderDetail(g) {
+  var d = state.details[g.group_id];
+  if (!d) return '<div class="members"><span class="spin"></span>加载明细…</div>';
+  var kw = (state.filter[g.group_id] || "").toLowerCase();
+  var rows = d.members.filter(function (m) {
+    return !kw || m.name.toLowerCase().indexOf(kw) >= 0 || m.openid.toLowerCase().indexOf(kw) >= 0;
+  });
+  var html = '<div class="members">';
+  html += '<div class="add-row">'
+    + '<input type="text" data-act="add-oid" placeholder="openid（32 位十六进制）" maxlength="32">'
+    + '<input type="text" data-act="add-name" placeholder="昵称">'
+    + '<button class="primary" data-act="add-member">添加</button>'
+    + '<span class="spacer"></span>'
+    + '<input type="text" data-act="search" placeholder="搜索昵称 / openid…" value="' + esc(state.filter[g.group_id] || "") + '">'
+    + "</div>";
+  html += '<table><thead><tr><th style="width:38%">昵称</th><th>openid</th><th>更新时间</th><th style="width:130px"></th></tr></thead><tbody>';
+  if (!rows.length) {
+    html += '<tr><td colspan="4" class="empty">无匹配记录</td></tr>';
+  }
+  rows.forEach(function (m) {
+    html += "<tr>"
+      + '<td><input type="text" data-act="name-input" data-oid="' + esc(m.openid) + '" value="' + esc(m.name) + '"></td>'
+      + '<td><span class="oid" data-full="' + esc(m.openid) + '" title="点击展开完整 openid">' + shortId(m.openid) + "…</span></td>"
+      + '<td><span class="time">' + esc(m.updated || "—") + "</span></td>"
+      + '<td><div class="row-actions">'
+      + '<button data-act="save-member" data-oid="' + esc(m.openid) + '">保存</button>'
+      + '<button class="danger" data-act="del-member" data-oid="' + esc(m.openid) + '">删除</button>'
+      + "</div></td></tr>";
+  });
+  html += "</tbody></table></div>";
+  return html;
+}
+
+function refresh() {
+  var view = api();
+  if (!view) { showError("页面桥接不可用（请从 WebUI 插件管理页进入）。"); return; }
+  document.getElementById("err-banner").style.display = "none";
+  document.getElementById("list").innerHTML = '<div class="card"><span class="spin"></span>加载中…</div>';
+  document.getElementById("stat").textContent = "加载中…";
+  view.apiGet("atmap/overview").then(function (data) {
+    state.groups = (data && data.groups) || [];
+    state.total = (data && data.total_members) || 0;
+    Object.keys(state.expanded).forEach(function (gid) {
+      if (!state.groups.some(function (g) { return g.group_id === gid; })) delete state.expanded[gid];
+    });
+    render();
+    /* 重扫/刷新会清空 details 缓存，但展开态保留——已展开的群要自动补拉明细，
+       否则永远停在"加载明细…"转圈（旧bug：必须手动收起再展开才触发拉取） */
+    state.groups.forEach(function (g) {
+      if (state.expanded[g.group_id] && !state.details[g.group_id]) loadDetail(g.group_id);
+    });
+  }).catch(function (e) { showError("加载失败：" + (e && e.message ? e.message : e)); });
+}
+
+function loadDetail(gid) {
+  api().apiGet("atmap/group/" + encodeURIComponent(gid)).then(function (d) {
+    state.details[gid] = d;
+    render();
+  }).catch(function (e) { growl(false, "加载明细失败：" + (e && e.message ? e.message : e)); });
+}
+
+document.addEventListener("click", function (ev) {
+  var t = ev.target.closest ? ev.target.closest("[data-act], .gid, .oid") : null;
+  if (!t) return;
+  var card = t.closest(".card");
+  var gid = card ? card.dataset.g : "";
+  var act = t.dataset ? t.dataset.act : null;
+
+  if (t.classList.contains("gid") || t.classList.contains("oid")) {
+    var full = t.dataset.full || "";
+    t.textContent = t.textContent.indexOf(full) >= 0 ? shortId(full) + "…" : full;
+    return;
+  }
+  if (!act) return;
+
+  if (act === "toggle") {
+    state.expanded[gid] = !state.expanded[gid];
+    if (state.expanded[gid] && !state.details[gid]) loadDetail(gid);
+    render();
+  } else if (act === "del-group") {
+    armConfirm(t, "确认整群删除？", function () {
+      api().apiPost("atmap/group/" + encodeURIComponent(gid) + "/delete").then(function () {
+        growl(true, "已删除该群映射");
+        delete state.expanded[gid];
+        refresh();
+      }).catch(function (e) { growl(false, "删除失败：" + (e && e.message ? e.message : e)); });
+    });
+  } else if (act === "add-member") {
+    var oidEl = card.querySelector('[data-act="add-oid"]');
+    var nameEl = card.querySelector('[data-act="add-name"]');
+    var oid = (oidEl.value || "").trim();
+    var name = (nameEl.value || "").trim();
+    if (!/^[0-9A-Fa-f]{32}$/.test(oid)) { growl(false, "openid 应为 32 位十六进制"); return; }
+    if (!name) { growl(false, "昵称不能为空"); return; }
+    api().apiPost("atmap/member", { gid: gid, openid: oid, name: name }).then(function () {
+      growl(true, "已添加 " + name);
+      oidEl.value = ""; nameEl.value = "";
+      loadDetail(gid); refresh();
+    }).catch(function (e) { growl(false, "添加失败：" + (e && e.message ? e.message : e)); });
+  } else if (act === "save-member") {
+    var oid2 = t.dataset.oid;
+    var input = card.querySelector('[data-act="name-input"][data-oid="' + oid2 + '"]');
+    var val = (input.value || "").trim();
+    if (!val) { growl(false, "昵称不能为空"); return; }
+    api().apiPost("atmap/member", { gid: gid, openid: oid2, name: val }).then(function () {
+      growl(true, "已保存");
+      loadDetail(gid); refresh();
+    }).catch(function (e) { growl(false, "保存失败：" + (e && e.message ? e.message : e)); });
+  } else if (act === "del-member") {
+    var oid3 = t.dataset.oid;
+    armConfirm(t, "确认删除？", function () {
+      api().apiPost("atmap/member/delete", { gid: gid, openid: oid3 }).then(function () {
+        growl(true, "已删除 " + shortId(oid3));
+        loadDetail(gid); refresh();
+      }).catch(function (e) { growl(false, "删除失败：" + (e && e.message ? e.message : e)); });
+    });
+  }
+});
+
+document.addEventListener("input", function (ev) {
+  var t = ev.target;
+  if (t.dataset && t.dataset.act === "search") {
+    var card = t.closest(".card");
+    if (card) {
+      state.filter[card.dataset.g] = t.value;
+      var pos = t.selectionStart;
+      render();
+      var again = card.querySelector('[data-act="search"]');
+      if (again) { again.focus(); again.setSelectionRange(pos, pos); }
+    }
+  }
+});
+
+document.getElementById("btn-refresh").addEventListener("click", refresh);
+document.getElementById("btn-reload").addEventListener("click", function () {
+  api().apiPost("atmap/reload").then(function (d) {
+    growl(true, "已重扫（" + ((d && d.groups) || 0) + " 个群）");
+    state.details = {};
+    refresh();
+  }).catch(function (e) { growl(false, "重扫失败：" + (e && e.message ? e.message : e)); });
+});
+
+/* bridge SDK 由服务端注入在 body 结束标签前，晚于本内联脚本——必须等 load 后再启动；
+   ready() 握手若迟迟不完成，超时兜底直接刷新。
+   注意：本文件 JS 内严禁出现字面的 body/script 结束标签写法——
+   服务端按"文件中第一个 body 结束标签"为锚点插入桥接 SDK，注释里写了就会被插爆 */
+function boot() {
+  var view = api();
+  if (!view) { showError("页面桥接不可用（请从 WebUI 插件管理页进入）。"); return; }
+  var done = false;
+  function go() {
+    if (done) return;
+    done = true;
+    refresh();
+  }
+  var p = view.ready ? view.ready() : null;
+  if (p && p.then) {
+    p.then(go, go);
+    setTimeout(go, 1500);
+  } else {
+    go();
+  }
+}
+if (document.readyState === "complete") boot();
+else window.addEventListener("load", boot);
+</script>
+</body>
+</html>
