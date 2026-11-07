@@ -9,13 +9,19 @@
     "description": "启用自动学习",
     "type": "bool",
     "default": true,
-    "hint": "从每条群消息的发送者（member_openid + 昵称）自动维护映射；若 QQ 事件 mentions 数组携带其他被@用户的昵称也一并学习。"
+    "hint": "为每个成员学两个字段、互不覆盖：QQ 昵称（消息发送者）与群名片（被@时随 mentions 数组下发）。"
   },
   "rewrite_enabled": {
     "description": "启用提及改写",
     "type": "bool",
     "default": true,
-    "hint": "把消息文本中的 <@HEX> 替换为 @昵称。关闭后仅学习不改写。"
+    "hint": "把消息文本中的 <@HEX> 替换为 @名字。关闭后仅学习不改写。"
+  },
+  "prefer_group_card": {
+    "description": "优先以群名片呈现成员",
+    "type": "bool",
+    "default": true,
+    "hint": "开：@提及与群聊上下文的发言人标签优先用群名片（需已学到），为空回退 QQ 昵称；关：优先 QQ 昵称、回退群名片。开启时会同步改写 sender.nickname 以统一标签名字空间，仅影响展示，不影响映射数据。"
   },
   "apply_platforms": {
     "description": "生效平台",
@@ -28,7 +34,7 @@
     "description": "已解析提及的格式",
     "type": "string",
     "default": "@{name}",
-    "hint": "模板变量：{name}=昵称 {short}=openid前6位 {id}=完整openid。"
+    "hint": "模板变量：{name}=按 prefer_group_card 优先级取到的名字 {short}=openid前6位 {id}=完整openid。"
   },
   "unknown_format": {
     "description": "未学到昵称时的格式",

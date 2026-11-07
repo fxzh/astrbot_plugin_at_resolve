@@ -190,23 +190,28 @@ function renderDetail(g) {
   if (!d) return '<div class="members"><span class="spin"></span>加载明细…</div>';
   var kw = (state.filter[g.group_id] || "").toLowerCase();
   var rows = d.members.filter(function (m) {
-    return !kw || m.name.toLowerCase().indexOf(kw) >= 0 || m.openid.toLowerCase().indexOf(kw) >= 0;
+    return !kw
+      || (m.name || "").toLowerCase().indexOf(kw) >= 0
+      || (m.alias || "").toLowerCase().indexOf(kw) >= 0
+      || m.openid.toLowerCase().indexOf(kw) >= 0;
   });
   var html = '<div class="members">';
   html += '<div class="add-row">'
     + '<input type="text" data-act="add-oid" placeholder="openid（32 位十六进制）" maxlength="32">'
     + '<input type="text" data-act="add-name" placeholder="昵称">'
+    + '<input type="text" data-act="add-alias" placeholder="群名片（可选）">'
     + '<button class="primary" data-act="add-member">添加</button>'
     + '<span class="spacer"></span>'
-    + '<input type="text" data-act="search" placeholder="搜索昵称 / openid…" value="' + esc(state.filter[g.group_id] || "") + '">'
+    + '<input type="text" data-act="search" placeholder="搜索昵称 / 群名片 / openid…" value="' + esc(state.filter[g.group_id] || "") + '">'
     + "</div>";
-  html += '<table><thead><tr><th style="width:38%">昵称</th><th>openid</th><th>更新时间</th><th style="width:130px"></th></tr></thead><tbody>';
+  html += '<table><thead><tr><th style="width:30%">昵称</th><th style="width:24%">群名片</th><th>openid</th><th>更新时间</th><th style="width:130px"></th></tr></thead><tbody>';
   if (!rows.length) {
-    html += '<tr><td colspan="4" class="empty">无匹配记录</td></tr>';
+    html += '<tr><td colspan="5" class="empty">无匹配记录</td></tr>';
   }
   rows.forEach(function (m) {
     html += "<tr>"
       + '<td><input type="text" data-act="name-input" data-oid="' + esc(m.openid) + '" value="' + esc(m.name) + '"></td>'
+      + '<td><input type="text" data-act="alias-input" data-oid="' + esc(m.openid) + '" value="' + esc(m.alias || "") + '" placeholder="—" title="被@时自动学习；清空后保存即删除"></td>'
       + '<td><span class="oid" data-full="' + esc(m.openid) + '" title="点击展开完整 openid">' + shortId(m.openid) + "…</span></td>"
       + '<td><span class="time">' + esc(m.updated || "—") + "</span></td>"
       + '<td><div class="row-actions">'
@@ -275,21 +280,25 @@ document.addEventListener("click", function (ev) {
   } else if (act === "add-member") {
     var oidEl = card.querySelector('[data-act="add-oid"]');
     var nameEl = card.querySelector('[data-act="add-name"]');
+    var aliasEl = card.querySelector('[data-act="add-alias"]');
     var oid = (oidEl.value || "").trim();
     var name = (nameEl.value || "").trim();
+    var alias = (aliasEl.value || "").trim();
     if (!/^[0-9A-Fa-f]{32}$/.test(oid)) { growl(false, "openid 应为 32 位十六进制"); return; }
-    if (!name) { growl(false, "昵称不能为空"); return; }
-    api().apiPost("atmap/member", { gid: gid, openid: oid, name: name }).then(function () {
-      growl(true, "已添加 " + name);
-      oidEl.value = ""; nameEl.value = "";
+    if (!name && !alias) { growl(false, "昵称与群名片至少填一项"); return; }
+    api().apiPost("atmap/member", { gid: gid, openid: oid, name: name, alias: alias }).then(function () {
+      growl(true, "已添加 " + (name || alias));
+      oidEl.value = ""; nameEl.value = ""; aliasEl.value = "";
       loadDetail(gid); refresh();
     }).catch(function (e) { growl(false, "添加失败：" + (e && e.message ? e.message : e)); });
   } else if (act === "save-member") {
     var oid2 = t.dataset.oid;
     var input = card.querySelector('[data-act="name-input"][data-oid="' + oid2 + '"]');
+    var ainput = card.querySelector('[data-act="alias-input"][data-oid="' + oid2 + '"]');
     var val = (input.value || "").trim();
-    if (!val) { growl(false, "昵称不能为空"); return; }
-    api().apiPost("atmap/member", { gid: gid, openid: oid2, name: val }).then(function () {
+    var aval = (ainput.value || "").trim();
+    if (!val && !aval) { growl(false, "昵称与群名片不能同时为空"); return; }
+    api().apiPost("atmap/member", { gid: gid, openid: oid2, name: val, alias: aval }).then(function () {
       growl(true, "已保存");
       loadDetail(gid); refresh();
     }).catch(function (e) { growl(false, "保存失败：" + (e && e.message ? e.message : e)); });

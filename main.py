@@ -5,13 +5,20 @@ qq_official 平台下，群友 A @ 群友 B 时，QQ 下发的消息文本里是
 
 本插件在每条群消息进入管道最前端时：
 
-  1. 学习：从消息 author（member_openid + 昵称）自动维护
-     openid → 昵称 的映射，按群持久化为 JSON（data/plugin_data/ 下）；
-     若 QQ 事件的 mentions 数组带非 bot 用户的 username，也一并学习。
-  2. 改写：把文本中的 `<@HEX>` / `<@!HEX>` 替换为 `@昵称`；
-     未学到的显示 `@群友XXXXXX`（openid 前 6 位，稳定可追踪）。
-     改写覆盖 message_str、消息链 Plain、Reply 引用文本，
+  1. 学习：为每个成员维护两个字段，各跟各的来源、互不覆盖——
+       name  ← 消息发送者 author.username（QQ 昵称）
+       alias ← 事件 mentions[].username（群名片，被@时随事件下发）
+     按群持久化为 JSON（data/plugin_data/ 下）。
+  2. 改写：把文本中的 `<@HEX>` / `<@!HEX>` 替换为 `@名字`。名字按
+     prefer_group_card 配置取：开=群名片优先、QQ 昵称回退；关=QQ 昵称
+     优先、群名片回退；两者皆无显示 `@群友XXXXXX`（openid 前 6 位，
+     稳定可追踪）。改写覆盖 message_str、消息链 Plain、Reply 引用文本，
      因此群聊上下文注入块 / 对话历史 / 消息存档全部同步净化。
+  3. 名字空间统一（prefer_group_card 开时）：已学到发送者群名片时，把
+     sender.nickname 一并改为群名片——内置群聊上下文的 [发言人/时间]
+     标签、发言人标注与 @ 改写从此用同一套名字，AI 不会把同一人误认
+     成两个。学到群名片前该成员仍以 QQ 昵称呈现，学到后自下次发言起
+     切换（每人至多一次；群名片本身改了会再次学习更新）。
 
 管理方式：
   · WebUI → 插件管理 → 本插件 → 「QQ群at映射管理」页面（增删改查、删除整群）
@@ -73,7 +80,8 @@ USAGE = "\n".join(
         "/atmap            查看已学习的群与人数",
         "/atmap show <序号|群ID>    查看某群的映射明细",
         "/atmap del <序号|群ID>     删除某群的持久化数据",
-        "/atmap set <群ID> <openid> <昵称>    手动添加/修正一条映射",
+        "/atmap set <群ID> <openid> <昵称>    手动添加/修正昵称",
+        "/atmap setcard <群ID> <openid> <群名片>    手动添加/修正群名片",
         "/atmap deluser <群ID> <openid>       删除一条映射",
         "/atmap reload     重新扫描数据目录",
     ]
@@ -89,10 +97,15 @@ def _short(openid: str) -> str:
 
 
 class AtMapStore:
-    """按群持久化的 openid → 昵称 映射存储。
+    """按群持久化的 openid → 名字 映射存储。
 
     每群一个 JSON 文件：data/plugin_data/<插件>/groups/<group_openid>.json
-    结构：{"group_id", "group_name", "last_active", "members": {OPENID: {"name","updated"}}}
+    结构：{"group_id", "group_name", "last_active",
+           "members": {OPENID: {"name", "alias", "updated"}}}
+    name  = QQ 昵称（来源：消息发送者 author.username）
+    alias = 群名片（来源：事件 mentions[].username，可能一直没有）
+    旧版文件（条目无 alias 字段）按 alias 为空兼容读取，无需迁移：
+    被旧版覆盖错的条目，待该成员下次发言即自动纠正。
     """
 
     def __init__(self, root: Path) -> None:
@@ -165,29 +178,96 @@ class AtMapStore:
             data["group_name"] = str(group_name)
         return data
 
-    def learn(self, gid: str, openid: str, nickname: str, group_name: str | None) -> bool:
-        """学习/更新一条映射。返回是否有变更。"""
+    def _learn_field(
+        self, gid: str, openid: str, field: str, value: str, group_name: str | None
+    ) -> bool:
+        """写入单一字段（name 或 alias）。返回是否有变更。"""
         openid = str(openid or "").strip().upper()
-        nickname = str(nickname or "").strip()
-        if not openid or not nickname:
+        value = str(value or "").strip()
+        if not openid or not value:
             return False
         data = self.touch_group(gid, group_name)
         members: dict = data["members"]
-        old = members.get(openid)
-        if old and old.get("name") == nickname:
-            return False  # 无变化，不落盘
-        members[openid] = {"name": nickname, "updated": _now_iso()}
+        entry = members.get(openid)
+        if not isinstance(entry, dict):
+            entry = {"name": "", "alias": "", "updated": _now_iso()}
+            members[openid] = entry
+        if entry.get(field) == value:
+            return False  # 该来源无变化，不落盘
+        entry[field] = value
+        entry["updated"] = _now_iso()
         self.save_group(gid, data)
         return True
 
-    def lookup(self, gid: str, openid: str) -> str | None:
+    def learn_author(
+        self, gid: str, openid: str, nickname: str, group_name: str | None
+    ) -> bool:
+        """学习 QQ 昵称（消息发送者本人，author.username）。"""
+        return self._learn_field(gid, openid, "name", nickname, group_name)
+
+    def learn_mention(
+        self, gid: str, openid: str, card: str, group_name: str | None
+    ) -> bool:
+        """学习群名片（事件 mentions[].username，被@时下发）。"""
+        return self._learn_field(gid, openid, "alias", card, group_name)
+
+    def set_entry(
+        self,
+        gid: str,
+        openid: str,
+        name: str | None = None,
+        alias: str | None = None,
+    ) -> bool:
+        """手动设置字段（WebUI/指令）：None=不动该字段，str（含空串）=设为该值。
+
+        与自动学习不同，允许写空值——空串即手动清除该字段
+        （清除后若再次被@观察到群名片，会照常自动学回）。返回是否有变更。
+        """
+        openid = str(openid or "").strip().upper()
+        if not openid or (name is None and alias is None):
+            return False
+        data = self.touch_group(gid, None)
+        members: dict = data["members"]
+        entry = members.get(openid)
+        if not isinstance(entry, dict):
+            entry = {"name": "", "alias": "", "updated": _now_iso()}
+            members[openid] = entry
+        changed = False
+        if name is not None and entry.get("name") != name:
+            entry["name"] = name
+            changed = True
+        if alias is not None and entry.get("alias") != alias:
+            entry["alias"] = alias
+            changed = True
+        if changed:
+            entry["updated"] = _now_iso()
+            self.save_group(gid, data)
+        return changed
+
+    def _entry(self, gid: str, openid: str) -> dict | None:
         data = self.load_group(gid)
         if not data:
             return None
-        entry = data["members"].get(str(openid).strip().upper())
-        if entry and entry.get("name"):
-            return str(entry["name"])
-        return None
+        entry = (data.get("members") or {}).get(str(openid).strip().upper())
+        return entry if isinstance(entry, dict) else None
+
+    def resolve(self, gid: str, openid: str, prefer_card: bool = True) -> str | None:
+        """按展示策略取名字：prefer_card=True 群名片优先、QQ 昵称回退；False 反之。"""
+        entry = self._entry(gid, openid)
+        if entry is None:
+            return None
+        name = str(entry.get("name") or "")
+        alias = str(entry.get("alias") or "")
+        if prefer_card:
+            return alias or name or None
+        return name or alias or None
+
+    def lookup_alias(self, gid: str, openid: str) -> str | None:
+        """取群名片（没学到则 None）。用于统一发送者标签的名字空间。"""
+        entry = self._entry(gid, openid)
+        if entry is None:
+            return None
+        return str(entry.get("alias") or "") or None
 
     def stats(self) -> list[dict]:
         out = []
@@ -229,9 +309,10 @@ class AtMapStore:
 @register(
     PLUGIN_NAME,
     "97857",
-    "QQ群at映射解析：自动学习 openid→昵称 映射，把 <@HEX> 改写为 @昵称，"
-    "AI 从此认得谁 at 了谁；WebUI 页面与 /atmap 指令均可管理",
-    "1.0.3",
+    "QQ群at映射解析：自动学习 openid→QQ昵称/群名片，把 <@HEX> 改写为 @名字，"
+    "并统一 @ 与群聊上下文发言人标签的名字空间，AI 从此认得谁 at 了谁；"
+    "WebUI 页面与 /atmap 指令均可管理",
+    "1.1.0",
 )
 class AtResolvePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig = None):
@@ -295,11 +376,18 @@ class AtResolvePlugin(Star):
             if not gid:
                 return
 
+            prefer_card = bool(self._cfg("prefer_group_card", True))
+
             if self._cfg("learn_enabled", True):
                 self._learn(event, gid)
 
             if self._cfg("rewrite_enabled", True):
-                self._rewrite(event, gid)
+                self._rewrite(event, gid, prefer_card)
+
+            # 名字空间统一：必须在 _learn 之后（学习读的是原始 QQ 昵称，
+            # 提前改写 sender.nickname 会把群卡片污染进 name 字段）
+            if prefer_card:
+                self._apply_card_nickname(event, gid)
         except Exception:
             logger.error("at_resolve: 处理群消息异常，消息按原样放行", exc_info=True)
 
@@ -311,13 +399,13 @@ class AtResolvePlugin(Star):
         except Exception:
             pass
 
-        # ① 消息发送者本人
-        self.store.learn(
+        # ① 消息发送者本人 → QQ 昵称（name 字段）
+        self.store.learn_author(
             gid, event.get_sender_id() or "", event.get_sender_name() or "", group_name
         )
 
-        # ② 事件 mentions 数组里可能携带的非 bot 用户（若 QQ 下发 username，
-        #    被@者即使从未发言也能当轮解析；是否下发以 debug 日志观察为准）
+        # ② 事件 mentions 数组携带的被@者 → 群名片（alias 字段）。
+        #    被@者即使从未发言也能当轮解析；与 name 字段互不覆盖。
         raw = getattr(event.message_obj, "raw_message", None)
         mentions = getattr(raw, "mentions", None) or []
         for m in mentions:
@@ -334,14 +422,16 @@ class AtResolvePlugin(Star):
             mid = str(m.get("member_openid") or m.get("id") or "").strip()
             name = str(m.get("username") or "").strip()
             if mid and name:
-                self.store.learn(gid, mid, name, group_name)
+                self.store.learn_mention(gid, mid, name, group_name)
 
         if self._cfg("debug_log", False) and mentions:
             logger.debug(
                 f"at_resolve: mentions payload => {json.dumps(mentions, ensure_ascii=False, default=str)[:500]}"
             )
 
-    def _rewrite(self, event: AstrMessageEvent, gid: str) -> None:
+    def _rewrite(
+        self, event: AstrMessageEvent, gid: str, prefer_card: bool = True
+    ) -> None:
         self_id = str(event.get_self_id() or "")
 
         def resolve(openid: str) -> str:
@@ -349,7 +439,7 @@ class AtResolvePlugin(Star):
                 return self._fmt("everyone_format", "@全体成员")
             if self_id and openid.upper() == self_id.upper():
                 return self._fmt("self_format", "@机器人")
-            name = self.store.lookup(gid, openid)
+            name = self.store.resolve(gid, openid, prefer_card)
             if name:
                 return self._fmt("mention_format", "@{name}", name=name, short=_short(openid), id=openid)
             return self._fmt(
@@ -388,6 +478,28 @@ class AtResolvePlugin(Star):
 
         if changed and self._cfg("debug_log", False):
             logger.debug(f"at_resolve: 重写了 {changed} 处提及 gid={_short(gid)}")
+
+    def _apply_card_nickname(self, event: AstrMessageEvent, gid: str) -> None:
+        """prefer_group_card 开启时，把发送者显示名统一为群名片（已学到时）。
+
+        内置群聊上下文标签 / 发言人标注 / 消息存档读取的都是
+        sender.nickname；本插件优先级（sys.maxsize）高于它们（maxsize-2），
+        在此提前改写即可让标签与 @ 改写同名。仅影响本次事件的展示层，
+        映射数据不受影响。必须在 _learn 之后调用。
+        """
+        sid = str(event.get_sender_id() or "")
+        if not sid:
+            return
+        card = self.store.lookup_alias(gid, sid)
+        if not card:
+            return
+        sender = getattr(event.message_obj, "sender", None)
+        if sender is None or getattr(sender, "nickname", None) == card:
+            return
+        try:
+            sender.nickname = card
+        except Exception:
+            pass  # 个别适配器的 sender 可能禁止改写，跳过即可
 
     # ------------------------------------------------------------------ #
     # 管理指令（/atmap，仅管理员）
@@ -441,8 +553,16 @@ class AtResolvePlugin(Star):
             gid, openid, name = args[0], args[1], " ".join(args[2:])
             if not self.store._valid_gid(gid):
                 return "群 ID 不合法。"
-            self.store.learn(gid, openid, name, None)
+            self.store.learn_author(gid, openid, name, None)
             return f"已写入: {_short(openid)} → {name}"
+        if sub == "setcard":
+            if len(args) < 3:
+                return "用法: /atmap setcard <群ID> <openid> <群名片>"
+            gid, openid, card = args[0], args[1], " ".join(args[2:])
+            if not self.store._valid_gid(gid):
+                return "群 ID 不合法。"
+            self.store.set_entry(gid, openid, alias=card)
+            return f"已写入群名片: {_short(openid)} → {card}"
         if sub == "deluser":
             if len(args) < 2:
                 return "用法: /atmap deluser <群ID> <openid>"
@@ -487,7 +607,13 @@ class AtResolvePlugin(Star):
             if i > 50:
                 lines.append(f"…仅显示前 50 条，共 {len(members)} 条")
                 break
-            lines.append(f"{i}. {_short(openid)} → {entry.get('name')}（{entry.get('updated')}）")
+            name = entry.get("name") or "—"
+            alias = entry.get("alias") or ""
+            lines.append(
+                f"{i}. {_short(openid)} → {name}"
+                + (f"（群名片:{alias}）" if alias else "")
+                + f"（{entry.get('updated')}）"
+            )
         return "\n".join(lines)
 
     # ------------------------------------------------------------------ #
@@ -533,7 +659,12 @@ class AtResolvePlugin(Star):
             if not data:
                 return self._err("该群没有映射数据", 404)
             members = [
-                {"openid": openid, "name": entry.get("name", ""), "updated": entry.get("updated", "")}
+                {
+                    "openid": openid,
+                    "name": entry.get("name", ""),
+                    "alias": entry.get("alias", "") or "",
+                    "updated": entry.get("updated", ""),
+                }
                 for openid, entry in (data.get("members") or {}).items()
             ]
             members.sort(key=lambda x: x["updated"], reverse=True)
@@ -566,15 +697,25 @@ class AtResolvePlugin(Star):
             body = await request.json(default={}) or {}
             gid = str(body.get("gid") or "").strip()
             openid = str(body.get("openid") or "").strip()
-            name = str(body.get("name") or "").strip()
-            if not gid or not openid or not name:
-                return self._err("gid / openid / name 均不能为空")
+            raw_name = body.get("name")
+            raw_alias = body.get("alias")
+            # None=请求未携带该字段（不动），空串=清除该字段
+            name = None if raw_name is None else str(raw_name).strip()
+            alias = None if raw_alias is None else str(raw_alias).strip()
+            if not gid or not openid:
+                return self._err("gid / openid 不能为空")
+            if name is None and alias is None:
+                return self._err("name / alias 至少提供一项")
+            if not name and not alias:
+                return self._err("昵称与群名片不能同时为空")
             if not self.store._valid_gid(gid):
                 return self._err("群 ID 不合法")
             if not re.fullmatch(r"[0-9A-Fa-f]{32}", openid):
                 return self._err("openid 应为 32 位十六进制字符串")
-            self.store.learn(gid, openid, name, None)
-            return self._ok({"gid": gid, "openid": openid.upper(), "name": name})
+            self.store.set_entry(gid, openid, name=name, alias=alias)
+            return self._ok(
+                {"gid": gid, "openid": openid.upper(), "name": name, "alias": alias}
+            )
         except Exception:
             logger.error("at_resolve: member set 接口异常", exc_info=True)
             return self._err("保存失败", 500)
