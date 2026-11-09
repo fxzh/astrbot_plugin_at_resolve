@@ -43,12 +43,7 @@ from astrbot.api.event.filter import EventMessageType, PermissionType
 from astrbot.api.message_components import Plain, Reply
 from astrbot.api.star import Context, Star, register
 
-try:
-    from astrbot.api import logger
-except Exception:
-    import logging
-
-    logger = logging.getLogger("astrbot")
+from astrbot.api import logger
 
 try:  # 兼容不同版本的 AstrBot
     from astrbot.api import AstrBotConfig
@@ -312,7 +307,7 @@ class AtMapStore:
     "QQ群at映射解析：自动学习 openid→QQ昵称/群名片，把 <@HEX> 改写为 @名字，"
     "并统一 @ 与群聊上下文发言人标签的名字空间，AI 从此认得谁 at 了谁；"
     "WebUI 页面与 /atmap 指令均可管理",
-    "1.1.0",
+    "1.1.1",
 )
 class AtResolvePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig = None):
